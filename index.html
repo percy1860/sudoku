@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>數獨</title>
+<style>
+:root {
+  --bg: #f6f4ef; --fg: #222; --cell: #fff; --line: #999; --thick: #333;
+  --given: #222; --user: #2463d1; --hl: #e6eefc; --same: #c9dbfb; --sel: #9fc0f7;
+  --bad: #d33; --badbg: #fde3e3; --btn: #fff; --btnb: #ccc; --muted: #777;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #17181b; --fg: #ddd; --cell: #222429; --line: #444; --thick: #aaa;
+    --given: #eee; --user: #7fb0ff; --hl: #2a3242; --same: #34436180; --sel: #3d5a8c;
+    --bad: #ff6b6b; --badbg: #4a2626; --btn: #26282d; --btnb: #444; --muted: #999;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font-family: -apple-system, "PingFang TC", "Noto Sans TC", sans-serif;
+  display: flex; justify-content: center; -webkit-tap-highlight-color: transparent; }
+main { width: min(480px, 100vw); padding: 16px; }
+header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 8px; }
+h1 { font-size: 1.3rem; margin: 0; }
+select, button { font: inherit; color: var(--fg); background: var(--btn);
+  border: 1px solid var(--btnb); border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+#info { display: flex; justify-content: space-between; color: var(--muted); font-size: .9rem; margin-bottom: 6px; }
+#board { display: grid; grid-template-columns: repeat(9, 1fr); aspect-ratio: 1;
+  border: 2px solid var(--thick); background: var(--thick); gap: 0; user-select: none; }
+.c { background: var(--cell); display: flex; align-items: center; justify-content: center;
+  font-size: clamp(1.1rem, 6vw, 1.7rem); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  position: relative; cursor: pointer; }
+.c:nth-child(9n) { border-right: none; }
+.c:nth-child(9n+3), .c:nth-child(9n+6) { border-right: 2px solid var(--thick); }
+.c.r2, .c.r5 { border-bottom: 2px solid var(--thick); }
+.c.r8 { border-bottom: none; }
+.c.given { color: var(--given); font-weight: 600; }
+.c.user { color: var(--user); }
+.c.hl { background: var(--hl); }
+.c.same { background: var(--same); }
+.c.sel { background: var(--sel); }
+.c.bad { color: var(--bad); background: var(--badbg); }
+.notes { position: absolute; inset: 1px; display: grid; grid-template-columns: repeat(3, 1fr);
+  font-size: clamp(.5rem, 2.4vw, .7rem); color: var(--muted); line-height: 1; }
+.notes span { display: flex; align-items: center; justify-content: center; }
+#pad { display: grid; grid-template-columns: repeat(9, 1fr); gap: 4px; margin-top: 12px; }
+#pad button { padding: 10px 0; font-size: 1.2rem; }
+#pad button.done { opacity: .3; }
+#tools { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
+#tools button.on { background: var(--sel); }
+#msg { text-align: center; margin-top: 12px; min-height: 1.4em; font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>數獨</h1>
+    <div>
+      <select id="level">
+        <option value="easy">簡單</option>
+        <option value="medium" selected>中等</option>
+        <option value="hard">困難</option>
+      </select>
+      <button id="new">新局</button>
+    </div>
+  </header>
+  <div id="info"><span id="mistakes">錯誤 0</span><span id="timer">00:00</span></div>
+  <div id="board"></div>
+  <div id="pad"></div>
+  <div id="tools">
+    <button id="undo">↶ 復原</button>
+    <button id="erase">⌫ 清除</button>
+    <button id="notesBtn">✎ 筆記</button>
+    <button id="hint">💡 提示</button>
+  </div>
+  <div id="msg"></div>
+</main>
+<script>
+// ---------- Sudoku core (pure functions; grid = array of 81 ints, 0 = empty) ----------
+const ROW = i => Math.floor(i / 9), COL = i => i % 9, BOX = i => Math.floor(ROW(i) / 3) * 3 + Math.floor(COL(i) / 3);
+const PEERS = Array.from({ length: 81 }, (_, i) => {
+  const s = new Set();
+  for (let j = 0; j < 81; j++) if (j !== i && (ROW(j) === ROW(i) || COL(j) === COL(i) || BOX(j) === BOX(i))) s.add(j);
+  return [...s];
+});
+function candidates(g, i) {
+  const used = new Set(PEERS[i].map(j => g[j]));
+  return [1,2,3,4,5,6,7,8,9].filter(n => !used.has(n));
+}
+function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+// Count solutions up to `limit`; fills g with a solution when found (if fill=true).
+function solve(g, limit = 2, randomize = false) {
+  let count = 0;
+  const rec = () => {
+    let best = -1, bestC = null;
+    for (let i = 0; i < 81; i++) if (!g[i]) {
+      const c = candidates(g, i);
+      if (!c.length) return false;
+      if (!bestC || c.length < bestC.length) { best = i; bestC = c; if (c.length === 1) break; }
+    }
+    if (best < 0) { count++; return count >= limit; }
+    for (const n of (randomize ? shuffle(bestC) : bestC)) {
+      g[best] = n;
+      if (rec()) return true;
+    }
+    g[best] = 0;
+    return false;
+  };
+  rec();
+  return count;
+}
+const CLUES = { easy: 40, medium: 32, hard: 25 };
+function generate(level) {
+  const sol = Array(81).fill(0);
+  solve(sol, 1, true);
+  const puz = sol.slice();
+  let filled = 81;
+  for (const i of shuffle([...Array(81).keys()])) {
+    if (filled <= CLUES[level]) break;
+    const keep = puz[i]; puz[i] = 0;
+    if (solve(puz.slice(), 2) !== 1) puz[i] = keep; else filled--;
+  }
+  return { puzzle: puz, solution: sol };
+}
+
+// ---------- Game state ----------
+const $ = id => document.getElementById(id);
+let S; // { puzzle, solution, grid, notes[81][], mistakes, seconds, level, done }
+let sel = -1, notesMode = false, history = [];
+const KEY = 'sudoku-save-v1';
+
+function save() { try { localStorage.setItem(KEY, JSON.stringify({ ...S, notes: S.notes.map(n => [...n]) })); } catch {} }
+function load() {
+  try {
+    const d = JSON.parse(localStorage.getItem(KEY));
+    if (d && d.grid && d.grid.length === 81) { d.notes = d.notes.map(n => new Set(n)); return d; }
+  } catch {}
+  return null;
+}
+function newGame(level) {
+  $('msg').textContent = '產生中…';
+  setTimeout(() => {
+    const { puzzle, solution } = generate(level);
+    S = { puzzle, solution, grid: puzzle.slice(), notes: Array.from({ length: 81 }, () => new Set()),
+          mistakes: 0, seconds: 0, level, done: false };
+    sel = -1; history = []; $('msg').textContent = '';
+    save(); render();
+  }, 10);
+}
+
+// ---------- Actions ----------
+function pushHistory() { history.push({ grid: S.grid.slice(), notes: S.notes.map(n => new Set(n)) }); if (history.length > 200) history.shift(); }
+function input(n) {
+  if (S.done || sel < 0 || S.puzzle[sel]) return;
+  pushHistory();
+  if (notesMode) {
+    if (S.grid[sel]) return history.pop();
+    S.notes[sel].has(n) ? S.notes[sel].delete(n) : S.notes[sel].add(n);
+  } else {
+    if (S.grid[sel] === n) { history.pop(); return; }
+    S.grid[sel] = n; S.notes[sel].clear();
+    if (n !== S.solution[sel]) S.mistakes++;
+    else PEERS[sel].forEach(j => S.notes[j].delete(n)); // auto-clear peer notes
+    checkWin();
+  }
+  save(); render();
+}
+function erase() {
+  if (S.done || sel < 0 || S.puzzle[sel]) return;
+  pushHistory(); S.grid[sel] = 0; S.notes[sel].clear(); save(); render();
+}
+function undo() {
+  if (S.done || !history.length) return;
+  const h = history.pop(); S.grid = h.grid; S.notes = h.notes; save(); render();
+}
+function hint() {
+  if (S.done) return;
+  let i = (sel >= 0 && S.grid[sel] !== S.solution[sel]) ? sel : -1;
+  if (i < 0) { const empt = [...Array(81).keys()].filter(k => S.grid[k] !== S.solution[k]); if (!empt.length) return; i = empt[Math.floor(Math.random() * empt.length)]; }
+  pushHistory(); S.grid[i] = S.solution[i]; S.notes[i].clear(); sel = i;
+  PEERS[i].forEach(j => S.notes[j].delete(S.solution[i]));
+  checkWin(); save(); render();
+}
+function checkWin() {
+  if (S.grid.every((v, i) => v === S.solution[i])) {
+    S.done = true;
+    $('msg').textContent = `🎉 完成！用時 ${fmt(S.seconds)}，錯誤 ${S.mistakes} 次`;
+  }
+}
+
+// ---------- Rendering ----------
+const fmt = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+const board = $('board'), cells = [];
+for (let i = 0; i < 81; i++) {
+  const d = document.createElement('div');
+  d.className = 'c'; d.onclick = () => { sel = i; render(); };
+  board.appendChild(d); cells.push(d);
+}
+for (let n = 1; n <= 9; n++) {
+  const b = document.createElement('button'); b.textContent = n; b.onclick = () => input(n); $('pad').appendChild(b);
+}
+function render() {
+  const sv = sel >= 0 ? S.grid[sel] : 0;
+  for (let i = 0; i < 81; i++) {
+    const d = cells[i], v = S.grid[i];
+    const cls = ['c', 'r' + ROW(i)];
+    if (S.puzzle[i]) cls.push('given'); else if (v) cls.push('user');
+    if (sel >= 0) {
+      if (i === sel) cls.push('sel');
+      else if (sv && v === sv) cls.push('same');
+      else if (ROW(i) === ROW(sel) || COL(i) === COL(sel) || BOX(i) === BOX(sel)) cls.push('hl');
+    }
+    if (v && !S.puzzle[i] && v !== S.solution[i]) cls.push('bad');
+    d.className = cls.join(' ');
+    if (v) d.textContent = v;
+    else if (S.notes[i].size) d.innerHTML = '<div class="notes">' +
+      [1,2,3,4,5,6,7,8,9].map(n => `<span>${S.notes[i].has(n) ? n : ''}</span>`).join('') + '</div>';
+    else d.textContent = '';
+  }
+  const counts = Array(10).fill(0);
+  S.grid.forEach((v, i) => { if (v && v === S.solution[i]) counts[v]++; });
+  [...$('pad').children].forEach((b, k) => b.classList.toggle('done', counts[k + 1] >= 9));
+  $('notesBtn').classList.toggle('on', notesMode);
+  $('mistakes').textContent = `錯誤 ${S.mistakes}`;
+  $('timer').textContent = fmt(S.seconds);
+  $('level').value = S.level;
+  if (S.done && !$('msg').textContent) $('msg').textContent = `🎉 完成！用時 ${fmt(S.seconds)}，錯誤 ${S.mistakes} 次`;
+}
+
+// ---------- Wiring ----------
+$('new').onclick = () => newGame($('level').value);
+$('undo').onclick = undo; $('erase').onclick = erase; $('hint').onclick = hint;
+$('notesBtn').onclick = () => { notesMode = !notesMode; render(); };
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'SELECT') return;
+  if (e.key >= '1' && e.key <= '9') return input(+e.key);
+  if (e.key === 'Backspace' || e.key === 'Delete' || e.key === '0') return erase();
+  if (e.key === 'n' || e.key === 'N') { notesMode = !notesMode; return render(); }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'z') { e.preventDefault(); return undo(); }
+  const mv = { ArrowUp: -9, ArrowDown: 9, ArrowLeft: -1, ArrowRight: 1 }[e.key];
+  if (mv) { e.preventDefault(); sel = sel < 0 ? 0 : (sel + mv + 81) % 81; render(); }
+});
+setInterval(() => {
+  if (S && !S.done && !document.hidden) { S.seconds++; $('timer').textContent = fmt(S.seconds); if (S.seconds % 5 === 0) save(); }
+}, 1000);
+
+S = load();
+if (S) render(); else newGame('medium');
+</script>
+</body>
+</html>
