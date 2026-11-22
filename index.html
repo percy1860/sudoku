@@ -16,15 +16,21 @@
     --bg: #17181b; --fg: #ddd; --cell: #222429; --line: #444; --thick: #aaa;
     --given: #eee; --user: #7fb0ff; --hl: #2a3242; --same: #34436180; --sel: #3d5a8c;
     --bad: #ff6b6b; --badbg: #4a2626; --btn: #26282d; --btnb: #444; --muted: #999;
-    --hint: #ffb340; --hint2: #ffb34066;
+    --hint: #ffb340; --hint2: #ffb34066; color-scheme: dark;
   }
 }
+:root[data-theme="dark"] {
+    --bg: #17181b; --fg: #ddd; --cell: #222429; --line: #444; --thick: #aaa;
+    --given: #eee; --user: #7fb0ff; --hl: #2a3242; --same: #34436180; --sel: #3d5a8c;
+    --bad: #ff6b6b; --badbg: #4a2626; --btn: #26282d; --btnb: #444; --muted: #999;
+    --hint: #ffb340; --hint2: #ffb34066; color-scheme: dark; }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg);
   font-family: -apple-system, "PingFang TC", "Noto Sans TC", sans-serif;
   display: flex; justify-content: center; -webkit-tap-highlight-color: transparent; }
 main { width: min(480px, 100vw); padding: 16px; }
-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 8px; }
+header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 8px; }
+header > div { display: flex; gap: 6px; }
 h1 { font-size: 1.3rem; margin: 0; }
 select, button { font: inherit; color: var(--fg); background: var(--btn);
   border: 1px solid var(--btnb); border-radius: 8px; padding: 6px 10px; cursor: pointer; }
@@ -70,6 +76,7 @@ select, button { font: inherit; color: var(--fg); background: var(--btn);
         <option value="hard">困難</option>
       </select>
       <button id="new">新局</button>
+      <button id="theme" aria-label="切換配色">◐ 自動</button>
     </div>
   </header>
   <div id="info"><span id="mistakes">錯誤 0</span><span id="timer">00:00</span></div>
@@ -468,6 +475,22 @@ setInterval(() => {
   if (S && !S.done && !document.hidden) { S.seconds++; $('timer').textContent = fmt(S.seconds); if (S.seconds % 5 === 0) save(false); }
 }, 1000);
 
+// Theme: auto follows the system (or the claude.ai host's data-theme); choice kept per browser
+const THEMES = [['auto', '◐ 自動'], ['light', '☀ 淺色'], ['dark', '☾ 深色']];
+const hostTheme = document.documentElement.getAttribute('data-theme');
+let theme = 'auto';
+try { const t = localStorage.getItem('sudoku-theme'); if (THEMES.some(x => x[0] === t)) theme = t; } catch {}
+function applyTheme() {
+  const v = theme === 'auto' ? hostTheme : theme;
+  if (v) document.documentElement.setAttribute('data-theme', v); else document.documentElement.removeAttribute('data-theme');
+  $('theme').textContent = THEMES.find(x => x[0] === theme)[1];
+}
+$('theme').onclick = () => {
+  theme = THEMES[(THEMES.findIndex(x => x[0] === theme) + 1) % THEMES.length][0];
+  try { localStorage.setItem('sudoku-theme', theme); } catch {}
+  applyTheme();
+};
+applyTheme();
 start();
 </script>
 </body>
