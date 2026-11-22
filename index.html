@@ -181,6 +181,19 @@ function findStep(grid) {
       if (elim(p1, [1,2,3,4,5,6,7,8,9].filter(d => d !== n1 && d !== n2)))
         return { text: `隱性數對：${u.name}的 ${n1}、${n2} 只能放在同樣兩格 → 那兩格的其他筆記可劃掉`, cells: u.cells };
     }
+    // X-Wing: digit n has exactly two spots in each of two lines, on the same two cross lines
+    for (const [base, crossBase, cross, crossKind] of [[9, 18, COL, '直行'], [18, 9, ROW, '橫列']]) for (let n = 1; n <= 9; n++) {
+      const two = [];
+      for (let k = 0; k < 9; k++) { const p = where(UNITS[base + k], n); if (p.length === 2) two.push({ k, p, x: p.map(cross) }); }
+      for (let a = 0; a < two.length; a++) for (let b = a + 1; b < two.length; b++) {
+        const A = two[a], B = two[b];
+        if (A.x[0] !== B.x[0] || A.x[1] !== B.x[1]) continue;
+        const corners = [...A.p, ...B.p];
+        const targets = A.x.flatMap(c => UNITS[crossBase + c].cells).filter(i => !corners.includes(i));
+        if (elim(targets, [n]))
+          return { text: `X-Wing：${UNITS[base + A.k].name}和${UNITS[base + B.k].name}的數字 ${n} 都只能在${UNITS[crossBase + A.x[0]].name}和${UNITS[crossBase + A.x[1]].name} → 這兩條${crossKind}的其他格不會有 ${n}`, cells: corners };
+      }
+    }
     return null;
   };
   const pre = [];
@@ -272,7 +285,7 @@ function hint() {
   const lines = st.pre.slice(0, 4).map((p, k) => `${'①②③④'[k]} ${p.text}`);
   if (st.pre.length > 4) lines.push(`…之後還要再排除 ${st.pre.length - 4} 次`);
   if (st.text) lines.push((st.pre.length ? '接著 ' : '') + st.text);
-  else lines.push('這步要用更進階的技巧（例如 X-Wing 或鏈），上面這些招式推不出來。');
+  else lines.push('這步要用更進階的技巧（例如 Swordfish 或鏈），上面這些招式推不出來。');
   if (st.pre.length) lines.unshift('先開筆記模式，依序劃掉候選數：');
   lines.push('再按一次 💡 直接填入答案');
   hintState = { key, target: st.target, cells: new Set(st.cells),
