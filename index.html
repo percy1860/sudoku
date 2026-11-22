@@ -198,6 +198,68 @@ function findStep(grid) {
                    cells: set.flatMap(l => l.p) };
       }
     }
+    // Chains, shortest first: XY-chain (bivalue cells) and X-chain (one digit, alternating strong/weak links)
+    for (let len = 3; len <= 10; len++) {
+      const r = xyChain(len) || (len % 2 === 0 && xChain(len));
+      if (r) return r;
+    }
+    return null;
+  };
+  const pos = i => `(${ROW(i) + 1},${COL(i) + 1})`;
+  const sees = (i, j) => PEERS[i].includes(j);
+  const both = (a, b, path) => ALL.filter(i => !path.includes(i) && sees(i, a) && sees(i, b));
+  const xyChain = len => {
+    const bival = ALL.filter(i => cand[i] && cand[i].size === 2);
+    for (const a of bival) for (const x of cand[a]) {
+      const path = [a];
+      const dfs = (cur, val) => { // cur is forced to val (assuming a is not x)
+        if (path.length === len) {
+          if (val !== x || !elim(both(a, cur, path), [x])) return null;
+          const desc = path.map(i => pos(i) + `{${[...cand[i]].join(',')}}`).join(' → ');
+          return { text: `${len === 3 ? 'XY-Wing（最短的 XY 鏈）' : 'XY 鏈'}：${desc}。假設頭一格不是 ${x}，沿著這些只剩兩個候選數的格子推下去，尾端那格就會是 ${x}；所以頭尾必有一格是 ${x} → 同時看得到頭尾兩格的格子不會有 ${x}（座標是 (橫列,直行)）`, cells: path.slice() };
+        }
+        for (const nx of bival) {
+          if (path.includes(nx) || !sees(cur, nx) || !cand[nx].has(val)) continue;
+          path.push(nx);
+          const r = dfs(nx, [...cand[nx]].find(d => d !== val));
+          if (r) return r;
+          path.pop();
+        }
+        return null;
+      };
+      const r = dfs(a, [...cand[a]].find(d => d !== x));
+      if (r) return r;
+    }
+    return null;
+  };
+  const xChain = len => {
+    for (let n = 1; n <= 9; n++) {
+      const has = ALL.filter(i => cand[i] && cand[i].has(n));
+      const strong = i => [UNITS[BOX(i)], UNITS[9 + ROW(i)], UNITS[18 + COL(i)]]
+        .map(u => where(u, n)).filter(p => p.length === 2).map(p => p[0] === i ? p[1] : p[0]);
+      for (const a of has) {
+        const path = [a];
+        const dfs = () => { // links alternate strong, weak, strong, ... and end on a strong link
+          const cur = path[path.length - 1];
+          if (path.length === len) {
+            if (!elim(both(a, cur, path), [n])) return null;
+            const desc = path.map((i, k) => (k ? (k % 2 ? ' ═ ' : ' ─ ') : '') + pos(i)).join('');
+            return { text: `X 鏈（數字 ${n}）：${desc}。═ 表示那一區的 ${n} 只剩這兩格（必有一格是 ${n}），─ 表示兩格互相看得到（最多一格是 ${n}）；一路推下來頭尾必有一格是 ${n} → 同時看得到頭尾兩格的格子不會有 ${n}（座標是 (橫列,直行)）`, cells: path.slice() };
+          }
+          const next = path.length % 2 ? strong(cur) : has.filter(j => sees(cur, j));
+          for (const nx of new Set(next)) {
+            if (path.includes(nx)) continue;
+            path.push(nx);
+            const r = dfs();
+            if (r) return r;
+            path.pop();
+          }
+          return null;
+        };
+        const r = dfs();
+        if (r) return r;
+      }
+    }
     return null;
   };
   const pre = [];
@@ -289,7 +351,7 @@ function hint() {
   const lines = st.pre.slice(0, 4).map((p, k) => `${'①②③④'[k]} ${p.text}`);
   if (st.pre.length > 4) lines.push(`…之後還要再排除 ${st.pre.length - 4} 次`);
   if (st.text) lines.push((st.pre.length ? '接著 ' : '') + st.text);
-  else lines.push('這步要用更進階的技巧（例如各種「鏈」），上面這些招式推不出來。');
+  else lines.push('這步要用更進階的技巧（更長的鏈或其他進階技巧），上面這些招式推不出來。');
   if (st.pre.length) lines.unshift('先開筆記模式，依序劃掉候選數：');
   lines.push('再按一次 💡 直接填入答案');
   hintState = { key, target: st.target, cells: new Set(st.cells),
