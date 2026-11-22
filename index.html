@@ -283,14 +283,56 @@ let S; // { puzzle, solution, grid, notes[81][], mistakes, seconds, level, done 
 let sel = -1, notesMode = false, history = [];
 const KEY = 'sudoku-save-v1';
 
-function save() { try { localStorage.setItem(KEY, JSON.stringify({ ...S, notes: S.notes.map(n => [...n]) })); } catch {} }
-function load() {
+// Progress lives in localStorage and, inside the claude.ai viewer, in the viewer's private
+// db doc data/users/<id>/sudoku (survives where localStorage doesn't, and syncs devices).
+let cloud = null, cloudBusy = false, cloudDirty = false, cloudTimer = 0;
+const serialize = () => JSON.stringify({ ...S, notes: S.notes.map(n => [...n]) });
+function parse(json) {
   try {
-    const d = JSON.parse(localStorage.getItem(KEY));
+    const d = JSON.parse(json);
     if (d && d.grid && d.grid.length === 81) { d.notes = d.notes.map(n => new Set(n)); return d; }
   } catch {}
   return null;
 }
+function save(toCloud = true) {
+  S.savedAt = Date.now();
+  try { localStorage.setItem(KEY, serialize()); } catch {}
+  if (toCloud && cloud) { cloudDirty = true; clearTimeout(cloudTimer); cloudTimer = setTimeout(flushCloud, 1500); }
+}
+async function flushCloud() {
+  clearTimeout(cloudTimer);
+  if (!cloud || cloudBusy || !cloudDirty) return;
+  cloudBusy = true; cloudDirty = false;
+  try { await cloud.set({ json: serialize() }); }
+  catch (e) { if (e && e.code === 'invalid_argument') cloud = null; else cloudDirty = true; }
+  cloudBusy = false;
+  if (cloudDirty && cloud) cloudTimer = setTimeout(flushCloud, 3000);
+}
+function load() { try { return parse(localStorage.getItem(KEY)); } catch { return null; } }
+async function connectCloud() {
+  if (!window.claude || !window.claude.use) return null;
+  try {
+    const [db, user] = await Promise.all([claude.use('db'), claude.use('user')]);
+    const id = db && user ? await user.id() : null;
+    return id ? db.doc('data/users/' + id + '/sudoku') : null;
+  } catch { return null; }
+}
+async function start() {
+  S = load();
+  if (S) render(); else $('msg').textContent = '讀取存檔…';
+  const ref = await Promise.race([connectCloud(), new Promise(r => setTimeout(() => r(null), 10000))]);
+  let remote = null;
+  if (ref) {
+    try { const snap = await ref.get(); if (snap.exists) remote = parse(snap.data().json); cloud = ref; } catch {}
+  }
+  if (remote && (!S || (remote.savedAt || 0) > (S.savedAt || 0))) {
+    S = remote; sel = -1; history = []; hintState = null; $('msg').textContent = '';
+    try { localStorage.setItem(KEY, serialize()); } catch {}
+    render();
+  } else if (!S) newGame('medium');
+  else if (cloud) { cloudDirty = true; flushCloud(); }
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden && S) { save(); flushCloud(); } });
 function newGame(level) {
   $('msg').textContent = '產生中…';
   setTimeout(() => {
@@ -305,7 +347,7 @@ function newGame(level) {
 // ---------- Actions ----------
 function pushHistory() { history.push({ grid: S.grid.slice(), notes: S.notes.map(n => new Set(n)) }); if (history.length > 200) history.shift(); }
 function input(n) {
-  if (S.done || sel < 0 || S.puzzle[sel]) return;
+  if (!S || S.done || sel < 0 || S.puzzle[sel]) return;
   pushHistory();
   if (notesMode) {
     if (S.grid[sel]) return history.pop();
@@ -320,17 +362,17 @@ function input(n) {
   save(); render();
 }
 function erase() {
-  if (S.done || sel < 0 || S.puzzle[sel]) return;
+  if (!S || S.done || sel < 0 || S.puzzle[sel]) return;
   pushHistory(); S.grid[sel] = 0; S.notes[sel].clear(); save(); render();
 }
 function undo() {
-  if (S.done || !history.length) return;
+  if (!S || S.done || !history.length) return;
   const h = history.pop(); S.grid = h.grid; S.notes = h.notes; save(); render();
 }
 // First press: explain technique + highlight region. Second press (board unchanged): fill the cell.
 let hintState = null;
 function hint() {
-  if (S.done) return;
+  if (!S || S.done) return;
   const key = S.grid.join('');
   if (hintState && hintState.key === key) {
     if (hintState.fix) return;
@@ -370,13 +412,14 @@ const fmt = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60
 const board = $('board'), cells = [];
 for (let i = 0; i < 81; i++) {
   const d = document.createElement('div');
-  d.className = 'c'; d.onclick = () => { sel = i; render(); };
+  d.className = 'c'; d.onclick = () => { if (S) { sel = i; render(); } };
   board.appendChild(d); cells.push(d);
 }
 for (let n = 1; n <= 9; n++) {
   const b = document.createElement('button'); b.textContent = n; b.onclick = () => input(n); $('pad').appendChild(b);
 }
 function render() {
+  if (!S) return;
   const sv = sel >= 0 ? S.grid[sel] : 0;
   const hintOn = !!hintState && hintState.key === S.grid.join('');
   if (!hintOn) hintState = null;
@@ -422,11 +465,10 @@ document.addEventListener('keydown', e => {
   if (mv) { e.preventDefault(); sel = sel < 0 ? 0 : (sel + mv + 81) % 81; render(); }
 });
 setInterval(() => {
-  if (S && !S.done && !document.hidden) { S.seconds++; $('timer').textContent = fmt(S.seconds); if (S.seconds % 5 === 0) save(); }
+  if (S && !S.done && !document.hidden) { S.seconds++; $('timer').textContent = fmt(S.seconds); if (S.seconds % 5 === 0) save(false); }
 }, 1000);
 
-S = load();
-if (S) render(); else newGame('medium');
+start();
 </script>
 </body>
 </html>
